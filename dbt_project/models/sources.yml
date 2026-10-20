@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Bang bronze Iceberg do Spark (load_bronze.py) ghi vao, du lieu goc chua lam sach.
+    schema: bronze
+    tables:
+      - name: yellow_trips
+        description: Chuyen taxi vang NYC, phan vung theo source_month.
+        columns:
+          - name: source_month
+            data_tests:
+              - not_null

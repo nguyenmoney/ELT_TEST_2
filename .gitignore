@@ -1,0 +1,22 @@
+# Moi truong
+.venv/
+.env
+__pycache__/
+*.pyc
+
+# Du lieu
+data/raw/*
+warehouse/*
+!data/raw/.gitkeep
+!warehouse/.gitkeep
+
+# dbt
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/.user.yml
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log

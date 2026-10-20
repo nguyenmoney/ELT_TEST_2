@@ -1,0 +1,20 @@
+[project]
+name = "nyc-elt"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Loc.NT_HUST", email = "nguyentienloc2469@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "dbt-core>=1.12.6",
+    "dbt-spark[session]>=1.11.0",
+    "pyarrow>=26.0.0",
+    "pyspark==3.5.1",
+    "requests>=2.34.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"

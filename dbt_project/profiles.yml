@@ -1,0 +1,21 @@
+# Noi dbt voi Spark + Iceberg, dung CHUNG catalog 'lake' va warehouse voi buoc bronze.
+# Chay dbt tu THU MUC GOC project (noi co pyproject.toml), vi cac duong dan ben duoi la tuong doi.
+nyc_taxi:
+  target: lake
+  outputs:
+    lake:
+      type: spark
+      method: session
+      schema: silver
+      host: NA
+      threads: 1
+      server_side_parameters:
+        spark.jars: "{{ env_var('ICEBERG_JAR', './jars/iceberg-spark-runtime-3.5_2.12-1.5.2.jar') }}"
+        spark.sql.extensions: org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+        spark.sql.catalog.lake: org.apache.iceberg.spark.SparkCatalog
+        spark.sql.catalog.lake.type: hadoop
+        spark.sql.catalog.lake.warehouse: "{{ env_var('WAREHOUSE_DIR', './warehouse') }}"
+        spark.sql.defaultCatalog: lake
+        spark.sql.sources.partitionOverwriteMode: dynamic
+        spark.sql.session.timeZone: UTC
+        spark.driver.memory: 2g
