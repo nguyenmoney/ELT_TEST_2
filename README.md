@@ -235,7 +235,53 @@ Xem nhanh số liệu:
 ```bash
 uv run python -c "from nyc_elt.spark_session import build_spark; s = build_spark('q'); s.sql('select (select count(*) from lake.bronze.yellow_trips) bronze, (select count(*) from lake.silver.silver_yellow_trips) silver, (select count(*) from lake.silver.quarantine_yellow_trips) quarantine').show(); s.stop()"
 ```
-
+### 8.3 Xem dữ liệu silver bằng DBeaver (service `spark-thrift`)
+ 
+**Vì sao cần service này?** Lakehouse chỉ là các file Parquet cùng metadata Iceberg. DBeaver không tự đọc được các file đó, nó chỉ gửi câu SQL qua JDBC đến một engine SQL. `spark-thrift` là engine đó: một Spark Thrift Server chạy trong container, nhận SQL ở cổng `10000`, đọc metadata Iceberg để biết bảng gồm những file Parquet nào, đọc dữ liệu rồi trả các dòng về cho DBeaver.
+ 
+```
+DBeaver --JDBC, cổng 10000--> Spark Thrift Server --> metadata Iceberg --> file Parquet
+(hiển thị)                    (container spark-thrift)                     (volume warehouse)
+```
+ 
+`spark-thrift` dùng chung image `nyc-elt-airflow` và chung volume `warehouse` với service `airflow`, nên thấy đúng các bảng mà DAG vừa ghi. Nó cấu hình catalog `lake` giống hệt `build_spark()`.
+ 
+**Khởi động**
+ 
+```bash
+docker compose up -d --build
+docker compose logs spark-thrift --tail 30   # chờ thấy dòng "Starting ThriftBinaryCLIService"
+```
+ 
+Lưu ý: cần chạy DAG ít nhất một lần để các bảng tồn tại trước khi truy vấn.
+ 
+**Kết nối trong DBeaver**
+ 
+1. Database > New Database Connection > chọn **Apache Hive** (hoặc Apache Spark). DBeaver sẽ hỏi tải driver, chọn Download.
+2. Host: `localhost`, Port: `10000`, Database: `default`.
+3. Username: nhập tên bất kỳ (ví dụ `admin`), để trống Password.
+4. Test Connection rồi Finish.
+5. Mở SQL Editor và gõ **tên đầy đủ** của bảng:
+```sql
+select * from lake.silver.silver_yellow_trips limit 10;
+ 
+select reject_reasons, count(*) as so_dong
+from lake.silver.quarantine_yellow_trips
+group by reject_reasons
+order by so_dong desc;
+```
+ 
+Cây thư mục bên trái của DBeaver có thể không hiển thị bảng của catalog `lake`. Đó là bình thường; cứ gõ SQL trực tiếp.
+ 
+**Xử lý lỗi thường gặp**
+ 
+| Hiện tượng | Cách xử lý |
+|---|---|
+| Không kết nối được cổng 10000 | Xem `docker compose logs spark-thrift --tail 50`; container có thể còn đang khởi động hoặc bị thiếu RAM |
+| `Table or view not found` | Chưa chạy DAG, hoặc quên ghi đủ tên `lake.silver.<bảng>` |
+| Truy vấn rất chậm | Thêm `limit`; Thrift Server chạy `local[2]` và 1 GB bộ nhớ |
+ 
+Cách thay thế không cần DBeaver: `docker compose exec` chạy Spark SQL, hoặc `python -m nyc_elt.query "<SQL>"` khi chạy tay (mục 8.2).
 ## 9. Kết quả mẫu
 
 Tháng `2024-06`:
