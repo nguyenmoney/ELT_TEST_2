@@ -2,7 +2,12 @@
 
 Neu lech thi bao loi (exit code khac 0) de Airflow danh dau task that bai.
 
-Chay:  uv run python -m nyc_elt.reconcile 2024-06
+Hai luong:
+  file (mac dinh) : bronze.yellow_trips    -> silver_yellow_trips    + quarantine_yellow_trips
+  pg              : bronze.yellow_trips_pg -> silver_yellow_trips_pg + quarantine_yellow_trips_pg
+
+Chay:  uv run python -m nyc_elt.reconcile 2024-06          (luong file)
+       uv run python -m nyc_elt.reconcile 2026-01 pg       (luong Postgres)
 """
 import re
 import sys
@@ -11,9 +16,19 @@ from pyspark.sql import SparkSession, functions as F
 
 from nyc_elt.spark_session import build_spark
 
-BRONZE_TABLE = "lake.bronze.yellow_trips"
-SILVER_TABLE = "lake.silver.silver_yellow_trips"
-QUARANTINE_TABLE = "lake.silver.quarantine_yellow_trips"
+# luong -> (bronze, silver, quarantine)
+FLOWS = {
+    "file": (
+        "lake.bronze.yellow_trips",
+        "lake.silver.silver_yellow_trips",
+        "lake.silver.quarantine_yellow_trips",
+    ),
+    "pg": (
+        "lake.bronze.yellow_trips_pg",
+        "lake.silver.silver_yellow_trips_pg",
+        "lake.silver.quarantine_yellow_trips_pg",
+    ),
+}
 
 
 def validate_month(month: str) -> str:
@@ -38,20 +53,23 @@ def check(bronze: int, silver: int, quarantine: int) -> None:
         )
 
 
-def reconcile(month: str) -> dict:
+def reconcile(month: str, flow: str = "file") -> dict:
     month = validate_month(month)
+    if flow not in FLOWS:
+        raise ValueError(f"flow phai la mot trong {list(FLOWS)}, nhan duoc: {flow!r}")
+    bronze_table, silver_table, quarantine_table = FLOWS[flow]
     spark = build_spark("reconcile")
     try:
         counts = {
-            "bronze": count_month(spark, BRONZE_TABLE, month),
-            "silver": count_month(spark, SILVER_TABLE, month),
-            "quarantine": count_month(spark, QUARANTINE_TABLE, month),
+            "bronze": count_month(spark, bronze_table, month),
+            "silver": count_month(spark, silver_table, month),
+            "quarantine": count_month(spark, quarantine_table, month),
         }
     finally:
         spark.stop()
 
     print(
-        f"Thang {month}: bronze={counts['bronze']:,} | "
+        f"[{flow}] Thang {month}: bronze={counts['bronze']:,} | "
         f"silver={counts['silver']:,} | quarantine={counts['quarantine']:,}"
     )
     check(**counts)
@@ -60,6 +78,6 @@ def reconcile(month: str) -> dict:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("Dung: python -m nyc_elt.reconcile YYYY-MM")
-    reconcile(sys.argv[1])
+    if len(sys.argv) not in (2, 3):
+        sys.exit("Dung: python -m nyc_elt.reconcile YYYY-MM [file|pg]")
+    reconcile(sys.argv[1], sys.argv[2] if len(sys.argv) == 3 else "file")

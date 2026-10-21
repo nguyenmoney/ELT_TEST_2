@@ -19,6 +19,11 @@ RUN mkdir -p /opt/jars \
     && curl -fsSL -o /opt/jars/${ICEBERG_JAR} \
        https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.2/${ICEBERG_JAR}
 
+# ---- 2b. Jar JDBC Postgres (Spark doc Postgres nguon o luong B) ----
+ARG PG_JAR=postgresql-42.7.3.jar
+RUN curl -fsSL -o /opt/jars/${PG_JAR} \
+       https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/${PG_JAR}
+
 # ---- 3. Thu muc lam viec ----
 RUN mkdir -p /opt/venv /opt/project /opt/airflow/data /opt/airflow/warehouse \
     && chown -R airflow /opt/venv /opt/project /opt/airflow/data /opt/airflow/warehouse
@@ -41,6 +46,7 @@ COPY --chown=airflow dbt_project ./dbt_project
 ENV PYTHONPATH=/opt/project/src \
     JARS_DIR=/opt/jars \
     ICEBERG_JAR=/opt/jars/${ICEBERG_JAR} \
+    PG_JAR=/opt/jars/${PG_JAR} \
     DATA_DIR=/opt/airflow/data \
     WAREHOUSE_DIR=/opt/airflow/warehouse
 # Luu y: KHONG them /opt/venv/bin vao PATH (se de len python cua Airflow).

@@ -1,4 +1,5 @@
-"""DAG ELT NYC Yellow Taxi: tai file -> bronze (Iceberg) -> silver + quarantine (dbt) -> test -> doi soat.
+"""DAG luong A (FILE): tai file -> bronze (Iceberg) -> silver + quarantine (dbt) -> test -> doi soat.
+Luong B (Postgres) nam o DAG rieng: nyc_taxi_elt_pg.py
 
 Trigger thu cong, nhap tham so `month` (dang YYYY-MM). Chay lai cung thang an toan (idempotent).
 """
@@ -11,10 +12,14 @@ from airflow.sdk import DAG, Param
 PY = "/opt/venv/bin/python"
 
 
+# Chi chay cac model cua luong A (luong B co model *_pg rieng, khong duoc chay o day)
+SELECT_A = "flagged_yellow_trips silver_yellow_trips quarantine_yellow_trips"
+
+
 def dbt_cmd(cmd: str) -> str:
-    """Lenh dbt (run/test) cho thang trong params.month."""
+    """Lenh dbt (run/test) cho thang trong params.month, chi cac model luong A."""
     return (
-        f"cd /opt/project && /opt/venv/bin/dbt {cmd} "
+        f"cd /opt/project && /opt/venv/bin/dbt {cmd} --select {SELECT_A} "
         "--project-dir dbt_project --profiles-dir dbt_project "
         """--vars '{"batch_month": "{{ params.month }}"}'"""
     )

@@ -16,6 +16,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # Postgres NGUON (luong B): chua du lieu taxi cua thang B, Spark doc qua JDBC.
+  # Tach rieng voi service "postgres" o tren (day la metadata cua Airflow).
+  pg-source:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: source
+      POSTGRES_PASSWORD: source
+      POSTGRES_DB: source_db
+    ports:
+      - "5433:5432"   # 5433 tren may de khong dung cong voi Postgres cai san (5432)
+    volumes:
+      - pgsource_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U source -d source_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   airflow:
     build:
       context: .
@@ -27,12 +46,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      pg-source:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Postgres nguon (luong B) - code Python doc cac bien nay
+      PG_SOURCE_HOST: pg-source
+      PG_SOURCE_PORT: "5432"
+      PG_SOURCE_DB: source_db
+      PG_SOURCE_USER: source
+      PG_SOURCE_PASSWORD: source
       # Tai khoan co dinh: admin / loc123 (xem docker/airflow/simple_auth_passwords.json)
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin"
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_passwords.json
@@ -75,5 +102,6 @@ services:
 
 volumes:
   pgdata:
+  pgsource_data:
   warehouse:
   airflow_logs:

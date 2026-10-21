@@ -15,21 +15,24 @@ ICEBERG_JAR_URL = (
     f"iceberg-spark-runtime-3.5_2.12/1.5.2/{ICEBERG_JAR_NAME}"
 )
 
+PG_JAR_NAME = "postgresql-42.7.3.jar"
+PG_JAR_URL = f"https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/{PG_JAR_NAME}"
+
 JARS_DIR = Path(os.getenv("JARS_DIR", "./jars")).resolve()
 WAREHOUSE_DIR = Path(os.getenv("WAREHOUSE_DIR", "./warehouse")).resolve()
 
 
-def ensure_iceberg_jar() -> Path:
-    """Tra ve duong dan jar Iceberg; tu tai ve neu chua co."""
-    jar = JARS_DIR / ICEBERG_JAR_NAME
+def _ensure_jar(name: str, url: str) -> Path:
+    """Tra ve duong dan jar trong JARS_DIR; tu tai ve neu chua co."""
+    jar = JARS_DIR / name
     if jar.exists():
         return jar
 
     JARS_DIR.mkdir(parents=True, exist_ok=True)
     tmp = jar.with_suffix(".part")
-    print(f"Dang tai {ICEBERG_JAR_URL}")
+    print(f"Dang tai {url}")
     try:
-        with requests.get(ICEBERG_JAR_URL, stream=True, timeout=120) as r:
+        with requests.get(url, stream=True, timeout=120) as r:
             r.raise_for_status()
             with open(tmp, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
@@ -40,8 +43,17 @@ def ensure_iceberg_jar() -> Path:
     return jar
 
 
+def ensure_iceberg_jar() -> Path:
+    return _ensure_jar(ICEBERG_JAR_NAME, ICEBERG_JAR_URL)
+
+
+def ensure_pg_jar() -> Path:
+    return _ensure_jar(PG_JAR_NAME, PG_JAR_URL)
+
+
 def build_spark(app_name: str) -> SparkSession:
-    jar = ensure_iceberg_jar()
+    # Iceberg (ghi/doc lakehouse) + JDBC Postgres (doc nguon o luong B)
+    jars = [ensure_iceberg_jar(), ensure_pg_jar()]
     WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
 
     # Dung dung Python cua moi truong hien tai cho worker (quan trong tren Windows)
@@ -50,7 +62,7 @@ def build_spark(app_name: str) -> SparkSession:
     return (
         SparkSession.builder.appName(app_name)
         .master("local[2]")
-        .config("spark.jars", jar.as_uri())
+        .config("spark.jars", ",".join(j.as_uri() for j in jars))
         .config("spark.driver.memory", os.getenv("SPARK_DRIVER_MEMORY", "2g"))
         .config("spark.sql.session.timeZone", "UTC")
         .config(

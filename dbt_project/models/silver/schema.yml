@@ -32,3 +32,36 @@ models:
       - name: source_month
         data_tests:
           - not_null
+
+  # ---- Luong B (Postgres) ----
+  - name: silver_yellow_trips_pg
+    description: Luong B - cac chuyen taxi hop le tu Postgres, da ep kieu va khu trung lap. Phan vung theo source_month.
+    columns:
+      - name: trip_id
+        description: Hash nhan dien chuyen di, duy nhat trong silver_pg.
+        data_tests:
+          - unique
+          - not_null
+      - name: tpep_pickup_datetime
+        data_tests:
+          - not_null
+      - name: tpep_dropoff_datetime
+        data_tests:
+          - not_null
+      - name: source_month
+        data_tests:
+          - not_null
+
+  - name: quarantine_yellow_trips_pg
+    description: Luong B - cac chuyen bi loai khoi silver_pg, giu nguyen du lieu goc kem ly do.
+    columns:
+      - name: trip_hash
+        data_tests:
+          - not_null
+      - name: reject_reasons
+        description: Danh sach ly do bi loai, luon co it nhat 1 phan tu.
+        data_tests:
+          - not_null
+      - name: source_month
+        data_tests:
+          - not_null

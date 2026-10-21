@@ -11,3 +11,9 @@ sources:
           - name: source_month
             data_tests:
               - not_null
+      - name: yellow_trips_pg
+        description: Luong B - chuyen taxi doc tu Postgres nguon qua JDBC (extract_postgres.py), cung schema voi yellow_trips.
+        columns:
+          - name: source_month
+            data_tests:
+              - not_null

@@ -75,11 +75,11 @@ def conform(df: DataFrame, month: str, source_file: str) -> DataFrame:
     )
 
 
-def create_table_if_missing(spark: SparkSession) -> None:
+def create_table_if_missing(spark: SparkSession, table: str = BRONZE_TABLE) -> None:
     col_defs = ", ".join(f"{n} {t}" for n, t in BRONZE_COLUMNS + META_COLUMNS)
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lake.bronze")
     spark.sql(
-        f"CREATE TABLE IF NOT EXISTS {BRONZE_TABLE} ({col_defs}) "
+        f"CREATE TABLE IF NOT EXISTS {table} ({col_defs}) "
         "USING iceberg PARTITIONED BY (source_month)"
     )
 

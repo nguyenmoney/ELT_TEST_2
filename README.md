@@ -1,10 +1,11 @@
 # NYC Taxi ELT – Data Lakehouse (Bronze → Silver)
 
-Pipeline ELT chạy trên máy cá nhân: tải dữ liệu **NYC Yellow Taxi** của một tháng, nạp nguyên bản vào lớp **bronze**, sau đó làm sạch thành lớp **silver** trong data lakehouse (Apache Iceberg). Các dòng dữ liệu không hợp lễ sẽ không bị xóa mà được tách sang bảng **quarantine** kèm lý do không hợp lệ.
+Pipeline ELT chạy trên máy cá nhân: tải dữ liệu **NYC Yellow Taxi** của một tháng, nạp nguyên bản vào lớp **bronze**, sau đó làm sạch thành lớp **silver** trong data lakehouse (Apache Iceberg). Các dòng dữ liệu không hợp lệ sẽ không bị xóa mà được tách sang bảng **quarantine** kèm lý do không hợp lệ.
 
 - **Input:** file parquet của 1 tháng (ví dụ `2024-06`, ~3,5 triệu dòng)
 - **Output:** bảng `silver_yellow_trips` (dòng hợp lệ) và `quarantine_yellow_trips` (dòng lỗi) trong lakehouse
 - **Điều phối:** Airflow, trigger thủ công và nhập tham số `month`
+- **Hai luồng nạp dữ liệu:** luồng A đọc từ **file parquet**, luồng B đọc từ **Postgres qua JDBC**. Mỗi luồng có DAG, bảng bronze, silver và quarantine riêng (luồng B có hậu tố `_pg`), cùng chung quy tắc làm sạch
 
 ## Mục lục
 
@@ -33,6 +34,21 @@ Luồng trong Airflow (DAG `nyc_taxi_elt`):
 download ──▶ load_bronze ──▶ dbt_run ──▶ dbt_test ──▶ reconcile
 ```
 
+Luồng B (DAG `nyc_taxi_elt_pg`) chỉ khác ở phần nạp bronze, từ `dbt_run` trở đi giống luồng A:
+
+```
+seed_postgres ──▶ extract_postgres ──▶ dbt_run ──▶ dbt_test ──▶ reconcile
+```
+
+| | Luồng A (file) | Luồng B (Postgres) |
+|---|---|---|
+| DAG | `nyc_taxi_elt` | `nyc_taxi_elt_pg` |
+| Nguồn | file parquet | bảng `public.yellow_trips` trong Postgres nguồn, Spark đọc qua JDBC |
+| Bronze | `lake.bronze.yellow_trips` | `lake.bronze.yellow_trips_pg` |
+| Silver | `silver_yellow_trips` | `silver_yellow_trips_pg` |
+| Quarantine | `quarantine_yellow_trips` | `quarantine_yellow_trips_pg` |
+| Tháng mặc định | `2024-06` | `2026-01` |
+
 ## 2. Công nghệ sử dụng
 
 | Công nghệ | Vai trò trong dự án |
@@ -43,7 +59,7 @@ download ──▶ load_bronze ──▶ dbt_run ──▶ dbt_test ──▶ re
 | **dbt (dbt-core + dbt-spark)** | Làm sạch dữ liệu: tạo silver và quarantine, chạy test chất lượng |
 | **Apache Airflow 3.3** | Tự động hóa quy trình, nhập tham số `month` khi trigger |
 | **Docker + Docker Compose** | Đóng gói toàn bộ (Java, Spark, jar Iceberg, dbt, Airflow, Postgres) |
-| **PostgreSQL 16** | Chỉ là cơ sở dữ liệu metadata của Airflow, không chứa dữ liệu taxi |
+| **PostgreSQL 16** | Hai instance riêng: `postgres` là metadata của Airflow (không chứa dữ liệu taxi); `pg-source` là **nguồn của luồng B**, Spark đọc qua JDBC (jar `postgresql-42.7.3`) |
 
 Phiên bản **pyspark 3.5.1 phải khớp với jar `iceberg-spark-runtime-3.5_2.12-1.5.2`**. Đổi một bên thì phải đổi bên còn lại.
 
@@ -55,7 +71,7 @@ nyc_taxi_elt/
 ├── uv.lock                         # khóa phiên bản thư viện
 ├── .python-version                 # Python 3.12
 ├── setup_project.sh                # script dựng cấu trúc project ban đầu
-├── docker-compose.yml              # chạy Postgres + Airflow
+├── docker-compose.yml              # Postgres (Airflow) + Postgres nguồn + Airflow + Spark Thrift
 ├── .dockerignore                   # loại file thừa khỏi image
 ├── .gitignore
 ├── .env.example                    # mẫu biến môi trường
@@ -64,22 +80,30 @@ nyc_taxi_elt/
 │       ├── Dockerfile              # image: Airflow + Java + Spark + Iceberg + dbt
 │       └── simple_auth_passwords.json   # mật khẩu đăng nhập Airflow
 ├── dags/
-│   └── nyc_taxi_elt.py             # DAG Airflow (5 task)
+│   ├── nyc_taxi_elt.py             # DAG luồng A: file (5 task)
+│   └── nyc_taxi_elt_pg.py          # DAG luồng B: Postgres (5 task)
 ├── src/nyc_elt/
 │   ├── download.py                 # E: tải parquet
 │   ├── spark_session.py            # tạo SparkSession có Iceberg (dùng chung)
-│   ├── load_bronze.py              # L: ghi bronze
-│   └── reconcile.py                # đối soát số dòng
+│   ├── load_bronze.py              # L: ghi bronze (luồng A)
+│   ├── pg_source.py                # cấu hình kết nối Postgres nguồn (luồng B)
+│   ├── seed_postgres.py            # luồng B: đưa dữ liệu 1 tháng vào Postgres nguồn
+│   ├── extract_postgres.py         # luồng B: đọc Postgres qua JDBC, ghi bronze_pg
+│   ├── reconcile.py                # đối soát số dòng (tham số luồng file|pg)
+│   └── query.py                    # chạy nhanh một câu Spark SQL
 ├── dbt_project/
 │   ├── dbt_project.yml             # cấu hình dbt, biến batch_month
 │   ├── profiles.yml                # kết nối dbt ↔ Spark ↔ Iceberg
 │   ├── macros/generate_schema_name.sql
 │   └── models/
-│       ├── sources.yml             # khai báo bảng bronze làm nguồn
+│       ├── sources.yml             # khai báo bảng bronze (cả hai luồng) làm nguồn
 │       └── silver/
 │           ├── flagged_yellow_trips.sql      # gắn cờ lỗi (không tạo bảng)
 │           ├── silver_yellow_trips.sql       # dòng hợp lệ
 │           ├── quarantine_yellow_trips.sql   # dòng lỗi kèm lý do
+│           ├── flagged_yellow_trips_pg.sql   # luồng B: gắn cờ lỗi
+│           ├── silver_yellow_trips_pg.sql    # luồng B: dòng hợp lệ
+│           ├── quarantine_yellow_trips_pg.sql # luồng B: dòng lỗi kèm lý do
 │           └── schema.yml                    # test dbt
 ├── data/raw/                       # file parquet tải về (không commit)
 ├── jars/                           # jar Iceberg khi chạy local (không commit)
@@ -127,14 +151,22 @@ Silver và quarantine đều dùng `incremental` + `insert_overwrite` theo `sour
 ### 4.5 `src/nyc_elt/reconcile.py` – đối soát
 Đếm số dòng của tháng đó ở bronze, silver và quarantine, rồi kiểm tra **bronze = silver + quarantine**. Lệch hoặc bronze rỗng thì thoát với mã lỗi để Airflow đánh dấu task thất bại.
 
-### 4.6 `dags/nyc_taxi_elt.py` – Airflow
-- DAG `nyc_taxi_elt`, `schedule=None` (chỉ chạy khi trigger), `max_active_runs=1`, mỗi task thử lại 1 lần.
-- Tham số `month` có kiểm tra dạng `YYYY-MM` ngay lúc trigger (mặc định `2024-06`).
+### 4.6 `dags/nyc_taxi_elt.py` và `dags/nyc_taxi_elt_pg.py` – Airflow
+- Hai DAG độc lập: `nyc_taxi_elt` (luồng A) và `nyc_taxi_elt_pg` (luồng B). Cả hai đều `schedule=None` (chỉ chạy khi trigger), `max_active_runs=1`, mỗi task thử lại 1 lần.
+- Tham số `month` có kiểm tra dạng `YYYY-MM` ngay lúc trigger (mặc định `2024-06` ở luồng A, `2026-01` ở luồng B).
 - Mỗi task là một `BashOperator` gọi đúng lệnh bạn có thể chạy tay (xem mục 6).
 
 ### 4.7 Docker
-- **`Dockerfile`**: nền `apache/airflow:3.3.0-python3.12`; cài Java 17 và uv; tải sẵn jar Iceberg vào `/opt/jars`; cài thư viện project vào **venv riêng `/opt/venv`** (tách khỏi Python của Airflow để tránh xung đột); copy `src/` và `dbt_project/` vào `/opt/project`; đặt các biến môi trường.
-- **`docker-compose.yml`**: hai service `postgres` (metadata của Airflow) và `airflow` (chế độ `standalone`). Volume `warehouse` là **riêng của Docker**; `./dags` và `./data` gắn từ máy. Cả hai service có `restart: unless-stopped`.
+- **`Dockerfile`**: nền `apache/airflow:3.3.0-python3.12`; cài Java 17 và uv; tải sẵn jar Iceberg và jar JDBC Postgres vào `/opt/jars`; cài thư viện project vào **venv riêng `/opt/venv`** (tách khỏi Python của Airflow để tránh xung đột); copy `src/` và `dbt_project/` vào `/opt/project`; đặt các biến môi trường.
+- **`docker-compose.yml`**: bốn service: `postgres` (metadata của Airflow), `pg-source` (Postgres nguồn của luồng B, cổng ngoài `5433`), `airflow` (chế độ `standalone`) và `spark-thrift` (cổng SQL để xem dữ liệu bằng DBeaver, xem mục 8.3). Volume `warehouse` là **riêng của Docker**; `./dags` và `./data` gắn từ máy. Cả bốn service có `restart: unless-stopped`.
+
+### 4.8 Luồng B: các file riêng cho Postgres
+- **`pg_source.py`**: chỉ chứa địa chỉ kết nối Postgres nguồn, đọc từ các biến `PG_SOURCE_*` (compose đặt sẵn trong Docker; chạy tay trên máy thì mặc định `localhost:5433`, user/password `source`).
+- **`seed_postgres.py`**: bước **giả lập nguồn**. Ngoài đời thực Postgres đã có sẵn dữ liệu. Ở đây đọc parquet của tháng B rồi ghi vào bảng `public.yellow_trips` bằng Spark JDBC. Mỗi lần ghi đè cả bảng (bảng chỉ chứa 1 tháng, có thêm cột `source_month`), tên cột đổi sang chữ thường để tránh cột phân biệt hoa thường trong Postgres.
+- **`extract_postgres.py`**: đọc bảng nguồn qua JDBC rồi ghi vào `lake.bronze.yellow_trips_pg`. Dùng lại `conform()` của luồng A nên bronze hai luồng **cùng schema**. Điều kiện lọc theo tháng được đẩy xuống Postgres; đọc song song 2 phần theo cột `pulocationid` (nếu không khai báo, JDBC chỉ dùng một kết nối). Có đối chiếu số dòng Postgres với bronze.
+- **Model dbt `*_pg`**: bản sao logic của luồng A nhưng đọc `yellow_trips_pg` và ghi `silver_yellow_trips_pg`, `quarantine_yellow_trips_pg`. Mỗi DAG dùng `dbt --select` để chỉ chạy model của mình.
+
+**Khác biệt giữa đọc file và đọc Postgres:** với file, Spark đọc thẳng; với Postgres, Spark gửi câu SQL qua mạng và Postgres tự chạy rồi trả dòng về. Dữ liệu nguồn có thể bị sửa, nên muốn đồng bộ phải đọc lại cả tháng (dự án chưa làm nạp tăng dần theo mốc thời gian).
 
 ## 5. Các thành phần kết nối với nhau như thế nào
 
@@ -144,6 +176,8 @@ Silver và quarantine đều dùng `incremental` + `insert_overwrite` theo `sour
 | **File parquet** `data/raw/yellow_tripdata_<month>.parquet` | `download.py` | `load_bronze.py` |
 | **Bảng bronze** `lake.bronze.yellow_trips` | `load_bronze.py` | dbt (qua `sources.yml`), `reconcile.py` |
 | **Bảng silver và quarantine** `lake.silver.*` | dbt | `dbt test`, `reconcile.py` |
+| **Bảng Postgres nguồn** `public.yellow_trips` (luồng B) | `seed_postgres.py` | `extract_postgres.py` |
+| **Bảng bronze luồng B** `lake.bronze.yellow_trips_pg` | `extract_postgres.py` | dbt (model `*_pg`), `reconcile.py ... pg` |
 | **Tham số `month`** | người dùng nhập khi trigger | tất cả các bước (`batch_month` trong dbt) |
 
 ![Kết nối giữa các thành phần](docs/code_connections.png)
@@ -163,6 +197,16 @@ Ví dụ trigger với `month = 2024-06`:
 | 3 | `dbt_run` | `dbt run --vars '{"batch_month": "2024-06"}'` | `flagged` được nhúng vào hai model; silver và quarantine được ghi đè phân vùng `2024-06` |
 | 4 | `dbt_test` | `dbt test ...` | 9 test chất lượng (unique, not null) phải đạt |
 | 5 | `reconcile` | `python -m nyc_elt.reconcile 2024-06` | In `KHỚP: bronze = silver + quarantine`, nếu lệch thì task thất bại |
+
+**Luồng B** (ví dụ `month = 2026-01`, DAG `nyc_taxi_elt_pg`):
+
+| Bước | Task | Lệnh thực tế | Kết quả |
+|---|---|---|---|
+| 1 | `seed_postgres` | `python -m nyc_elt.seed_postgres 2026-01` | Bảng `public.yellow_trips` của Postgres nguồn chứa đủ dòng của tháng; số dòng khớp file |
+| 2 | `extract_postgres` | `python -m nyc_elt.extract_postgres 2026-01` | Phân vùng `source_month=2026-01` của `bronze.yellow_trips_pg` được ghi đè; số dòng bronze = số dòng Postgres |
+| 3 | `dbt_run` | `dbt run --select <model *_pg> --vars ...` | `silver_yellow_trips_pg` và `quarantine_yellow_trips_pg` được ghi đè phân vùng tháng |
+| 4 | `dbt_test` | `dbt test --select <model *_pg> ...` | Test unique, not null của hai bảng `_pg` phải đạt |
+| 5 | `reconcile` | `python -m nyc_elt.reconcile 2026-01 pg` | In `KHỚP: bronze = silver + quarantine` cho luồng B |
 
 Một task thất bại thì các task sau không chạy. Mọi bước đều **idempotent**: chạy lại cùng tháng không tạo dữ liệu trùng.
 
@@ -282,6 +326,26 @@ Cây thư mục bên trái của DBeaver có thể không hiển thị bảng c�
 | Truy vấn rất chậm | Thêm `limit`; Thrift Server chạy `local[2]` và 1 GB bộ nhớ |
  
 Cách thay thế không cần DBeaver: `docker compose exec` chạy Spark SQL, hoặc `python -m nyc_elt.query "<SQL>"` khi chạy tay (mục 8.2).
+### 8.4 Chạy luồng B (Postgres)
+
+1. `docker compose up -d --build` (cần build lại vì thêm service `pg-source`, jar JDBC và code mới).
+2. Trong Airflow, trigger DAG **`nyc_taxi_elt_pg`**, nhập `month` (ví dụ `2026-01`). Task `seed_postgres` có thể mất vài phút vì ghi hơn 3 triệu dòng qua JDBC.
+3. Xem dữ liệu nguồn trong DBeaver: PostgreSQL, host `localhost`, cổng **5433**, database `source_db`, user và password đều là `source`. Lệnh nhanh: `docker compose exec pg-source psql -U source -d source_db -c "select count(*) from public.yellow_trips;"`.
+4. Xem bảng silver luồng B qua `spark-thrift`: `select * from lake.silver.silver_yellow_trips_pg limit 10;`
+
+Chạy tay một bước trong container (Git Bash trên Windows cần `MSYS_NO_PATHCONV=1` phía trước để không bị đổi đường dẫn):
+```bash
+MSYS_NO_PATHCONV=1 docker compose exec airflow /opt/venv/bin/python -m nyc_elt.reconcile 2026-01 pg
+```
+
+**Lỗi thường gặp**
+
+| Hiện tượng | Nguyên nhân và cách xử lý |
+|---|---|
+| `exec: "C:/Program Files/Git/opt/venv/bin/python": no such file` | Git Bash tự đổi đường dẫn `/opt/...`; thêm `MSYS_NO_PATHCONV=1` phía trước lệnh |
+| Lệnh chạy ra bản cũ (ví dụ thiếu tham số `pg`) | `src/` và `dbt_project/` nằm trong image; sửa xong phải `docker compose up -d --build` |
+| DBeaver: `invalid value for parameter "TimeZone": "Asia/Saigon"` | Postgres 16 không nhận tên múi giờ cũ; thêm `-Duser.timezone=Asia/Ho_Chi_Minh` vào `dbeaver.ini` sau dòng `-vmargs` |
+
 ## 9. Kết quả mẫu
 
 Tháng `2024-06`:
@@ -307,13 +371,6 @@ Số dòng theo lý do (một dòng có thể có nhiều lý do, nên tổng l�
 
 Chạy DAG trong Docker với tháng này mất khoảng 1 phút 23 giây (file parquet đã có sẵn nên bước `download` bỏ qua).
 
-
-- **Warehouse của Docker và của chạy local là hai nơi riêng.** Metadata Iceberg lưu đường dẫn tuyệt đối, nên không dùng chung thư mục `warehouse/` giữa hai môi trường.
-- **Airflow `standalone` và `SimpleAuthManager` chỉ dành cho môi trường dev.** Mật khẩu `loc123` nằm trong repo; chỉ phù hợp bản chạy trên máy cá nhân.
-- **`negative_amount` chiếm gần như toàn bộ quarantine** (61.915 dòng). Nhiều khả năng đây là hoàn tiền hoặc điều chỉnh giá; chưa phân tích theo `payment_type` nên chưa kết luận được có nên loại hay không.
-- Mỗi lần chạy xử lý **một tháng**. Muốn nhiều tháng thì trigger lần lượt từng tháng.
-- Schema bronze cố định theo các cột đã biết (gồm `cbd_congestion_fee` có từ 2025). Nếu NYC thêm cột mới, code sẽ cảnh báo và bỏ qua cột đó cho đến khi thêm vào `BRONZE_COLUMNS`.
-- Chưa có lớp gold, chưa chạy theo lịch.
 
 ## 10. Phân chia công việc giữa người làm và AI
 
