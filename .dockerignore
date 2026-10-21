@@ -1,0 +1,17 @@
+# Khong dua vao build context cua Docker
+.git/
+.venv/
+.env
+data/
+warehouse/
+jars/
+metastore_db/
+derby.log
+**/__pycache__/
+*.pyc
+
+# File sinh ra khi chay dbt tren may local (cache co duong dan Windows lam dbt trong container loi)
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/.user.yml

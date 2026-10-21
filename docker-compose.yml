@@ -1,0 +1,50 @@
+# Chay:  docker compose up -d --build     (tu thu muc goc project)
+# Airflow UI: http://localhost:8080
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+    image: nyc-elt-airflow
+    restart: unless-stopped
+    # standalone = chay api-server, scheduler, dag-processor trong 1 container (du cho ban local)
+    command: standalone
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Tai khoan co dinh: admin / loc123 (xem docker/airflow/simple_auth_passwords.json)
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_passwords.json
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./docker/airflow/simple_auth_passwords.json:/opt/airflow/simple_auth_passwords.json
+      - ./data:/opt/airflow/data
+      # warehouse Iceberg dung volume rieng cua Docker, KHONG dung chung ./warehouse chay local
+      - warehouse:/opt/airflow/warehouse
+      - airflow_logs:/opt/airflow/logs
+
+volumes:
+  pgdata:
+  warehouse:
+  airflow_logs:

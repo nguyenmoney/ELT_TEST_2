@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: silver_yellow_trips
+    description: Cac chuyen taxi hop le, da ep kieu va khu trung lap. Phan vung theo source_month.
+    columns:
+      - name: trip_id
+        description: Hash nhan dien chuyen di, duy nhat trong silver.
+        data_tests:
+          - unique
+          - not_null
+      - name: tpep_pickup_datetime
+        data_tests:
+          - not_null
+      - name: tpep_dropoff_datetime
+        data_tests:
+          - not_null
+      - name: source_month
+        data_tests:
+          - not_null
+
+  - name: quarantine_yellow_trips
+    description: Cac chuyen bi loai khoi silver, giu nguyen du lieu goc kem ly do.
+    columns:
+      - name: trip_hash
+        data_tests:
+          - not_null
+      - name: reject_reasons
+        description: Danh sach ly do bi loai, luon co it nhat 1 phan tu.
+        data_tests:
+          - not_null
+      - name: source_month
+        data_tests:
+          - not_null
